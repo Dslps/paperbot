@@ -66,7 +66,8 @@ SCAN_WINDOW_MIN = 30               # hourly pump scan may run up to 30 min late 
 EXPECT = {"C": 2.2, "B": 2.6, "E": 1.6}   # backtest average net % per trade
 # ----------------------------------------------------------------
 
-API = "https://fapi.binance.com"
+# BINANCE_API lets you route requests through your own relay (e.g. a Cloudflare Worker) if the server IP is banned
+API = (os.environ.get("BINANCE_API") or "https://fapi.binance.com").rstrip("/")
 HOUR, MIN, BAR = 3_600_000, 60_000, 900_000
 DAY = 86_400_000
 DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_bot")
