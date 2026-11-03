@@ -1,0 +1,4 @@
+{
+  "regions": ["fra1"],
+  "rewrites": [{ "source": "/fapi/:p*", "destination": "/api/relay?p=:p*" }]
+}
