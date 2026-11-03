@@ -190,7 +190,20 @@ def read_trades():
 
 
 # ---------------- market data ----------------
+class RateLimited(Exception):
+    pass
+
+
+BAN_UNTIL = [0.0]          # unix time until which Binance asked us to stop sending requests
+
+
+def ban_left():
+    return max(0.0, BAN_UNTIL[0] - time.time())
+
+
 def get(path, params=None, tries=4):
+    if ban_left() > 0:
+        raise RateLimited(f"Binance pause, {int(ban_left())}s left")
     url = API + path
     if params:
         url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
@@ -200,8 +213,14 @@ def get(path, params=None, tries=4):
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             if e.code in (418, 429):
-                log(f"rate limit ({e.code}), waiting 60s")
-                time.sleep(60)
+                # 429 = too many requests, 418 = IP temporarily banned. Retry-After says for how long.
+                ra = e.headers.get("Retry-After") if e.headers else None
+                wait = int(ra) if ra and ra.strip().isdigit() else (300 if e.code == 418 else 60)
+                wait = max(wait, 30)
+                BAN_UNTIL[0] = time.time() + wait
+                log(f"Binance rate limit HTTP {e.code} (Retry-After={ra}): pausing all requests for {wait}s"
+                    + (" - this server's IP is temporarily banned by Binance" if e.code == 418 else ""))
+                raise RateLimited(f"HTTP {e.code}")
             elif a == tries - 1:
                 raise
             else:
@@ -325,6 +344,8 @@ def refresh_watch(watch, ages):
             continue
         try:
             k = get("/fapi/v1/klines", {"symbol": sym, "interval": "15m", "limit": 99, "endTime": bar - 1})
+        except RateLimited:
+            raise
         except Exception as e:
             log(f"{sym}: 15m klines failed ({e})")
             continue
@@ -389,6 +410,8 @@ def pump_scan(st, ages, dry=False):
             continue
         try:
             k = get("/fapi/v1/klines", {"symbol": sym, "interval": "1h", "limit": 27, "endTime": hour_start - 1})
+        except RateLimited:
+            raise
         except Exception as e:
             log(f"{sym}: 1h klines failed ({e})")
             continue
@@ -561,6 +584,9 @@ def main():
     log(f"Bot started{' (cloud storage)' if CLOUD else ''}: strategies C + B + E, equity ${st['equity']:.2f}, "
         f"open {len(st['open'])}, size {int(POS_SIZE*100)}%, max {MAX_POS}")
     while True:
+        if ban_left() > 0:                        # Binance asked us to pause: don't spam requests or the log
+            time.sleep(min(ban_left(), 60) + 1)
+            continue
         t = now_ms()
         try:
             if t - ages_at > HOUR or not ages:
